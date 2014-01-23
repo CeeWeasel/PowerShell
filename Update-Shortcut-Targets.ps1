@@ -92,7 +92,7 @@
             HelpMessage="The name of the computer to search for shortcuts.  If not specified, local accounts on the local computer will be searched.",
             Mandatory=$false
         )]
-        [string]$ComputerName = $env:COMPUTERNAME,
+        [array]$ComputerName = $env:COMPUTERNAME,
 
         [Parameter(
             HelpMessage="If used, a backup of the shortcuts will be made.",
@@ -104,7 +104,6 @@
 
     Begin
     {
-        
         $Links = @()
         if ( ( Test-Path $OldTarget ) ) { $OldTargetLinks = get-childitem -filter *.lnk $OldTarget } else { $OldTarget = $Null }
         if ( ( Test-Path $NewTarget ) ) { $NewTargetLinks = get-childitem -filter *.lnk $NewTarget } else { $NewTarget = $Null }
@@ -113,12 +112,44 @@
 
     Process
     {
-        <#
+    $ErrorActionPreference = "Stop"
         foreach ( $Computer in $ComputerName )
         {
-            
+            if ( $Computer -eq $env:COMPUTERNAME )
+            { $AllUsersProfile = $env:ALLUSERSPROFILE }
+            else
+            {
+                try
+                { $Online = Test-Connection $Computer }
+                catch
+                { $Online = $false }
+                
+                if ( $Online )
+                {
+                    try
+                    {
+                        $AllUsersProfile = Invoke-Command -ComputerName $Computer -ScriptBlock { $env:ALLUSERSPROFILE }
+                    }
+                    catch
+                    {
+                        $AllUsersProfile = $Null
+                        try
+                        {
+                            $XPTest = "\\" + $Computer + "\c$\Documents and Settings"
+                            $7Test = "\\" + $Computer + "\c$\Users"
+                            $TestingXP = Test-Path $XPTest
+                            $Testing7 = Test-Path $7Test
+                        }
+                        catch { "who knows what's up" }
+                        finally { Write-Host "$XPTest - $TestingXP : $7Test - $Testing7" }
+
+                    }
+                }
+                else { $AllUsersProfile = $Null }
+            }
+            Write-Host "AllUserProfile on $Computer is $AllUsersProfile"
         }
-        #>
+        Return "Stopping for now"
 
         $Win7Style = ( Test-Path "$env:SystemDrive\Users" )
         #region Original Code
@@ -194,3 +225,4 @@
     }
     End {}
 }
+Update-Shortcut-Targets -OldTarget "C:\Test" -NewTarget "C:\Test" -ComputerName "AGHXEN1","AGHXEN30","RAPIDCOMM","PC0110","LPT040","AGHRDP02" -UserName weacli
