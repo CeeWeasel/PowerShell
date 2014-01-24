@@ -21,6 +21,9 @@
 
         .PARAMETER OldTarget
             Shortcuts with targets meeting this requirement will be changed.  Can be a directory, file, or string.
+            To reference a directory within a user's profile, use '~Profile~' (e.g. '~Profile~'\Desktop)
+            To reference the system drive, use '~System~' (e.g. '~System~'\Windows' )
+            To reference a specific drive, use '~Drive Letter~' (e.g. '~C~\Program Files' )
             
         .PARAMETER NewTarget
             How to change shortcut targets.  Can be a directory, file, or string.
@@ -127,45 +130,79 @@
     $ErrorActionPreference = "Stop"
         foreach ( $Computer in $ComputerName )
         {
-            $Reachable = $true
+            $ProfileParent = $Null
             if ( $Computer -like "*\*" ) { $Computer = ($Computer.split("\"))[1] } # Try to catch computer names that include the domain. ( e.g. domain\computername )
-            if ( $Computer -eq $env:COMPUTERNAME ) { $AllUsersProfile = $env:ALLUSERSPROFILE }
-            else
+            if ( $Computer -eq $env:COMPUTERNAME )
             {
-                try { $Online = Test-Connection $Computer }
-                catch { $Reachable = $false }
-                
-                if ( $Online )
-                {
-                    try
-                    {
-                        $AllUsersProfile = Invoke-Command -ComputerName $Computer -ScriptBlock { $env:ALLUSERSPROFILE }
-                    }
-                    catch
-                    {
-                        $AllUsersProfile = $Null
-                        $Reachable = $false
-                    }
-                }
-                else { $AllUsersProfile = $Null }
-            }
-            if ( $Reachable -and $Online )
-            {
-                $XPTest = "\\" + $Computer + "\c$\Documents and Settings"
-                $7Test = "\\" + $Computer + "\c$\Users"
+                $XPTest = $env:SystemDrive + "\Documents and Settings"
+                $7Test = $env:SystemDrive + "\Users"
                 if ( Test-Path $XPTest ) { $ProfileParent = $XPTest }
                 if ( Test-Path $7Test ) { $ProfileParent = $7Test }
-                if ( $ProfileParent ) { $Reachable = $true }
             }
-            Write-Host "AllUserProfile on $Computer is $AllUsersProfile : And ProfileParent is $ProfileParent"
+            try
+            {
+                Invoke-Command -ComputerName $Computer -ScriptBlock {
+                    $XPTest = "\\" + $Computer + "\"  + $env:SystemDrive[0] + "\Documents and Settings"
+                    $7Test = "\\" + $Computer + "\"  + $env:SystemDrive[0] + "\Users"
+                    if ( Test-Path $XPTest ) { $ProfileParent = $XPTest ; $SystemDrive = $env:SystemDrive }
+                    if ( Test-Path $7Test ) { $ProfileParent = $7Test ; $SystemDrive = $env:SystemDrive }
+                }
+            }
+            catch
+            { $error[0].Message }
+                
+            if ( ! $ProfileParent )
+            {
+                try
+                {
+                    $DrivesToTry = "c","d","e","f" | ForEach-Object {
+                        $XPTest = "\\" + $Computer + "\" + $_ + "$\Documents and Settings"
+                        $7Test = "\\" + $Computer + "\" + $_ + "$\Users"
+                        if ( Test-Path $XPTest ) { $ProfileParent = $XPTest ; $SystemDrive = $_ }
+                        if ( Test-Path $7Test ) { $ProfileParent = $7Test ; $SystemDrive = $_ }
+                    }
+                }
+                catch { $error[0].Message }
+            }
+            Write-Host "ProfileParent on $Computer is $ProfileParent"
+
+            <#
+            At this point, we have tried to get the multiple ways to to get the $ProfileParent
+            I'm at the point where if we can't get it, then the computer is either offline,
+            we don't have invoke access on the computer, or UNC access.
+
+            From here, if we have a $ProfileParent, then we are good to go.
+            #>
+
+            if ( $ProfileParent )
+            {
+                if ( $AllUsers )
+                {
+                    $UserName = $Null
+                    $UserName = Get-ChildItem -Directory $ProfileParent
+                }
+                foreach ( $Account in $UserName )
+                {
+                    $SearchResults = @()
+                    if ( $Account -like "*\*" ) { $Account = ($Account.split("\"))[1] } # Strip the domain from usernames
+                    $ShortcutDirectory = $ProfileParent + "\" + $Account # e.g. c:\users\jimsmith
+                    if ( $ProfileDirectory ) { $ShortcutDirectory += "\" + $ProfileDirectory } # E.G. c:\users\jimsmith\desktop
+                    Write-Host "Checking $ShortcutDirectory"
+                    if ( Test-Path $ShortcutDirectory ) { $SearchResults += Get-ChildItem -filter *.lnk $ShortcutDirectory -Recurse }
+                    Write-Host "$SearchResults"
+                    foreach ( $Result in $SearchResults )
+                    {
+                        ###
+                    }
+                }
+            }
         }
         Return "Stopping for now"
-
+<# This was my original way of doing this.
         $Win7Style = ( Test-Path "$env:SystemDrive\Users" )
         #region Original Code
-        If ( $Win7Style ) { $UsersDir = "$env:SystemDrive\Users" ; Write-Log -Message "Using Win7 style profile paths" -Path C:\MyLog.txt -EventLogName 'Application'}
-        else { $UsersDir = "$env:SystemDrive\Documents and Settings" ; Write-Log -Message "Using WinXP style profile paths" -Path C:\MyLog.txt -EventLogName 'Application'}
-        Write-Log -Message "Users directory set to $UsersDir" -Path C:\MyLog.txt -EventLogName 'Application' -Level Info
+        If ( $Win7Style ) { $UsersDir = "$env:SystemDrive\Users" }
+        else { $UsersDir = "$env:SystemDrive\Documents and Settings" }
         
         If ( $UserName )
         {
@@ -174,18 +211,13 @@
                 $DesktopDirs += Get-ChildItem "$UsersDir\$UserName\Desktop"
             }
         }
-        else
-        {
-            $DesktopDirs = Get-ChildItem "$UsersDir\$env:UserName\Desktop"
-        }
+
         If ( $AllUsers ) { $DesktopDirs = Get-ChildItem $UsersDir }
 
         ForEach ( $Directory in $DesktopDirs )
         {
-            Write-Log -Message "Gathering links from $Directory" -Path C:\MyLog.txt -EventLogName 'Application' -Level Info
             $Links = @()
             $Links = Get-ChildItem -filter *.lnk $Directory.FullName  -recurse
-            Write-Log -Message "Updating desktop shortcuts for $Directory, using $OldTarget and $NewTarget" -EventLogName 'Application' -Level Info
             If ( $Links )
             {
                 ForEach ( $Link in $Links )
@@ -232,7 +264,8 @@
             }
         }
         #endregion
+#>
     }
     End {}
 }
-Update-Shortcut-Targets -OldTarget "C:\Test" -NewTarget "C:\Test" -ComputerName "AGHXEN1","AGHXEN30","RAPIDCOMM","PC0110","LPT040","AGHRDP02" -UserName weacli
+Update-Shortcut-Targets -OldTarget "C:\Test" -NewTarget "C:\Test" -ComputerName "AGHXEN1","AGHXEN30","RAPIDCOMM","PC0110","AGHRDP02" -AllUsers -ProfileDirectory Desktop
