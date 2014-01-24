@@ -16,6 +16,18 @@
         .PARAMETER AllUsers
             If specified, all local profiles will be checked for .lnk files.
 
+        .PARAMETER ProfileDirectory
+            The folder within the specified user's profile that will be searched for shortcuts.
+
+        .PARAMETER OldTarget
+            Shortcuts with targets meeting this requirement will be changed.  Can be a directory, file, or string.
+            
+        .PARAMETER NewTarget
+            How to change shortcut targets.  Can be a directory, file, or string.
+
+        .PARAMETER ComputerName
+            The name of the computer to search for shortcuts.  If not specified, local accounts on the local computer will be searched.
+
         .EXAMPLE
             Update-Shortcut-Targets
 
@@ -43,7 +55,7 @@
             Date Coded   : 01/22/2014 16:46:54
 
         .LINK
-            https://github.com/CeeWease/PowerShell/wiki/Update-Shortcut-Targets
+            https://github.com/CeeWeasel/PowerShell/wiki/Update-Shortcut-Targets
 
         .TODO
             Add functionality for detecting files and strings in both $OldTarget and $NewTarget
@@ -115,14 +127,13 @@
     $ErrorActionPreference = "Stop"
         foreach ( $Computer in $ComputerName )
         {
-            if ( $Computer -eq $env:COMPUTERNAME )
-            { $AllUsersProfile = $env:ALLUSERSPROFILE }
+            $Reachable = $true
+            if ( $Computer -like "*\*" ) { $Computer = ($Computer.split("\"))[1] } # Try to catch computer names that include the domain. ( e.g. domain\computername )
+            if ( $Computer -eq $env:COMPUTERNAME ) { $AllUsersProfile = $env:ALLUSERSPROFILE }
             else
             {
-                try
-                { $Online = Test-Connection $Computer }
-                catch
-                { $Online = $false }
+                try { $Online = Test-Connection $Computer }
+                catch { $Reachable = $false }
                 
                 if ( $Online )
                 {
@@ -133,21 +144,20 @@
                     catch
                     {
                         $AllUsersProfile = $Null
-                        try
-                        {
-                            $XPTest = "\\" + $Computer + "\c$\Documents and Settings"
-                            $7Test = "\\" + $Computer + "\c$\Users"
-                            $TestingXP = Test-Path $XPTest
-                            $Testing7 = Test-Path $7Test
-                        }
-                        catch { "who knows what's up" }
-                        finally { Write-Host "$XPTest - $TestingXP : $7Test - $Testing7" }
-
+                        $Reachable = $false
                     }
                 }
                 else { $AllUsersProfile = $Null }
             }
-            Write-Host "AllUserProfile on $Computer is $AllUsersProfile"
+            if ( $Reachable -and $Online )
+            {
+                $XPTest = "\\" + $Computer + "\c$\Documents and Settings"
+                $7Test = "\\" + $Computer + "\c$\Users"
+                if ( Test-Path $XPTest ) { $ProfileParent = $XPTest }
+                if ( Test-Path $7Test ) { $ProfileParent = $7Test }
+                if ( $ProfileParent ) { $Reachable = $true }
+            }
+            Write-Host "AllUserProfile on $Computer is $AllUsersProfile : And ProfileParent is $ProfileParent"
         }
         Return "Stopping for now"
 
